@@ -54,6 +54,12 @@ button,input{font:inherit;color:inherit}
 .status{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:14px}
 .status i{width:10px;height:10px;border-radius:50%;background:var(--warn)}
 .status.on i{background:var(--good)} .status.off i{background:var(--red)}
+.nsel{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.nsel span{font-weight:700;margin-right:4px}
+.nsel button{min-width:44px;height:38px;border-radius:9px;border:1px solid var(--line);background:var(--paper);font:700 16px var(--f-num);cursor:pointer;padding:0 8px}
+.nsel button[aria-pressed="true"]{background:var(--blue);color:#fff;border-color:var(--blue)}
+.nsel input{width:72px;height:38px;border-radius:9px;border:1px solid var(--line);background:var(--paper);font:700 16px var(--f-num);text-align:center}
+.nnote{font-size:13px;color:var(--warn)}
 .warnbox{background:rgba(207,63,53,.08);border:1px solid var(--red);border-radius:10px;padding:12px;font-size:14px}
 .stats{display:flex;flex-wrap:wrap;gap:10px 28px;align-items:baseline}
 .stats b{font-family:var(--f-num);font-size:34px;font-weight:700;color:var(--blue)}
@@ -169,7 +175,12 @@ svg .last{fill:var(--paper);stroke:var(--blue);stroke-width:3}
           <div class="qr" id="qr" aria-label="QR code à scanner"></div>
           <div class="txt">
             <div class="big">Scannez pour lancer le dé</div>
-            <div class="muted">20 lancers par élève. Les résultats arrivent ici tout seuls.</div>
+            <div class="muted"><span id="nlabel">20</span> lancers par élève. Les résultats arrivent ici tout seuls.</div>
+            <div class="nsel" id="nsel"><span>Lancers par élève :</span>
+              <button data-n="10">10</button><button data-n="20">20</button><button data-n="30">30</button><button data-n="50">50</button><button data-n="100">100</button>
+              <input id="ncustom" type="number" min="1" max="500" inputmode="numeric" aria-label="Autre nombre de lancers" placeholder="autre">
+            </div>
+            <div class="nnote" id="nnote" hidden>Le QR code a changé : les élèves qui avaient déjà scanné doivent le rescanner.</div>
             <div class="url" id="joinurl"></div>
             <div class="status" id="status"><i></i><span>Connexion…</span></div>
             <div class="tools">
@@ -233,7 +244,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 <script>
 (function(){
 /* ======= Réglages ======= */
-const N_LANCERS = 20;
+const N_DEFAUT = 20;
+const clampN = v => { v=parseInt(v,10); return v>=1 && v<=500 ? v : N_DEFAUT; };
 const RELAIS = "https://ntfy.sh/";   // service gratuit qui transmet les résultats des téléphones vers l'ordinateur
 /* ======================== */
 
@@ -251,9 +263,10 @@ if (SALLE && /^[a-z0-9-]{8,64}$/.test(SALLE)) eleveMode(SALLE); else profMode();
 
 /* =================== ÉLÈVE =================== */
 function eleveMode(salle){
+  const N_LANCERS = clampN(params.get("n"));
   $("view-eleve").hidden = false;
-  $("subtitle").textContent = "Tes 20 lancers, envoyés directement au tableau de la classe";
-  const KEY = "des-eleve-" + salle;
+  $("subtitle").textContent = `Tes ${N_LANCERS} lancers, envoyés directement au tableau de la classe`;
+  const KEY = "des-eleve-" + salle + "-" + N_LANCERS;
   let st = load(KEY) || { id: rand(10), seq: [], sent: false };
   const PIPS = {1:[5],2:[3,7],3:[3,5,7],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
   for (let f=1; f<=6; f++){
@@ -277,7 +290,7 @@ function eleveMode(salle){
   async function send(){
     setSent("wait","Envoi au professeur…"); $("e-retry").hidden=true;
     try{
-      const r = await fetch(RELAIS + salle, { method:"POST", body: JSON.stringify({ id: st.id, c: counts() }) });
+      const r = await fetch(RELAIS + salle, { method:"POST", body: JSON.stringify({ id: st.id, c: counts(), n: N_LANCERS }) });
       if (!r.ok) throw new Error(r.status);
       st.sent = true; save(KEY,st); render();
     }catch(e){
@@ -291,7 +304,7 @@ function eleveMode(salle){
     $("e-seq").innerHTML = st.seq.map(f=>`<span>${f}</span>`).join("");
     for (let f=1; f<=6; f++) $("die"+f).disabled = done;
     $("e-undo").disabled = !k;
-    $("e-sub").textContent = done ? "Les 20 lancers sont faits." : `Lancer n° ${k+1} sur ${N_LANCERS}`;
+    $("e-sub").textContent = done ? `Les ${N_LANCERS} lancers sont faits.` : `Lancer n° ${k+1} sur ${N_LANCERS}`;
     $("e-done").hidden = !done;
     if (done){
       const c=counts(); c.forEach((v,i)=>$("ef"+(i+1)).textContent=v);
@@ -309,19 +322,34 @@ function profMode(){
   const KEY = "des-classe-v2";
   const EXAMPLE = [[3,4,2,5,3,3],[4,2,3,3,5,3],[2,5,4,3,2,4],[3,3,4,2,4,4]];
   let st = load(KEY);
-  if (!st || !st.salle) st = { salle: "des-" + rand(14), rows: EXAMPLE.map((c,i)=>({name:"Exemple "+(i+1), c, ex:true})), face:6, qr:true };
+  if (!st || !st.salle) st = { salle: "des-" + rand(14), rows: EXAMPLE.map((c,i)=>({name:"Exemple "+(i+1), c, ex:true, n:20})), face:6, qr:true, n:N_DEFAUT };
+  if (!st.n) st.n = N_DEFAUT;
   const commit = () => { save(KEY, st); render(); };
 
   // --- QR code ---
   const online = /^https?:$/.test(location.protocol);
   $("localwarn").hidden = online;
   function drawQR(){
-    const url = location.origin + location.pathname + "?s=" + st.salle;
+    const url = location.origin + location.pathname + "?s=" + st.salle + "&n=" + st.n;
     $("joinurl").textContent = url;
     const qr = qrcode(0, "M"); qr.addData(url); qr.make();
     $("qr").innerHTML = qr.createImgTag(6, 0);
   }
   const showJoin = v => { $("joinpanel").hidden = !v; $("showqr").hidden = v; st.qr = v; save(KEY, st); };
+  function setN(v, fromInput){
+    v = clampN(v); if (v===st.n) { renderN(); return; }
+    st.n = v; $("nnote").hidden = !st.rows.some(r=>r.tel);
+    save(KEY, st); drawQR(); renderN(); render();
+  }
+  function renderN(){
+    $("nlabel").textContent = st.n;
+    let preset=false;
+    document.querySelectorAll("#nsel button").forEach(b=>{ const on=+b.dataset.n===st.n; if(on) preset=true; b.setAttribute("aria-pressed", on); });
+    if (document.activeElement!==$("ncustom")) $("ncustom").value = preset ? "" : st.n;
+  }
+  document.querySelectorAll("#nsel button").forEach(b=>b.onclick=()=>setN(b.dataset.n));
+  $("ncustom").addEventListener("change", ()=>{ if ($("ncustom").value) setN($("ncustom").value); });
+  $("ncustom").addEventListener("keydown", e=>{ if (e.key==="Enter"){ e.preventDefault(); $("ncustom").blur(); if ($("ncustom").value) setN($("ncustom").value); } });
   $("hideqr").onclick = ()=>showJoin(false);
   $("showqr").onclick = ()=>showJoin(true);
 
@@ -335,8 +363,8 @@ function profMode(){
     if (st.rows.some(r=>r.ex)) st.rows = st.rows.filter(r=>!r.ex);
     if ((st.ignored||[]).includes(d.id)) return;
     const existing = st.rows.find(r=>r.tel===d.id);
-    if (existing){ if (existing.c.join()===c.join()) return; existing.c=c; existing.fresh=true; }
-    else { const n = st.rows.filter(r=>!r.sim).length + 1; st.rows.push({ name:"Élève "+n, c, tel:d.id, fresh:true }); }
+    if (existing){ if (existing.c.join()===c.join()) return; existing.c=c; existing.n=clampN(d.n); existing.fresh=true; }
+    else { const n = st.rows.filter(r=>!r.sim).length + 1; st.rows.push({ name:"Élève "+n, c, tel:d.id, fresh:true, n: clampN(d.n) }); }
     commit();
     const tb=$("tablebox"); tb.scrollTop = tb.scrollHeight;
   }
@@ -368,7 +396,7 @@ function profMode(){
     const c=parse($("quick").value), el=$("hint");
     if (!$("quick").value.trim()){ el.className="hint"; el.textContent="Les 6 effectifs dictés par l'élève, puis Entrée."; return; }
     if (!c){ el.className="hint bad"; el.textContent="Il faut 6 nombres, séparés par des espaces."; return; }
-    const t=sum(c); el.className="hint "+(t===N_LANCERS?"ok":"bad");
+    const t=sum(c), N_LANCERS=st.n; el.className="hint "+(t===N_LANCERS?"ok":"bad");
     el.textContent = t===N_LANCERS ? `Total ${t} : correct. Entrée pour ajouter.` : `Total ${t} au lieu de ${N_LANCERS}. Vérifiez avec l'élève.`;
   });
   $("entry").addEventListener("submit", e=>{
@@ -376,20 +404,20 @@ function profMode(){
     const c=parse($("quick").value); if(!c) return;
     if (st.rows.some(r=>r.ex)) st.rows = st.rows.filter(r=>!r.ex);
     const n = st.rows.filter(r=>!r.sim).length + 1;
-    st.rows.push({ name:"Élève "+n, c, fresh:true });
+    st.rows.push({ name:"Élève "+n, c, fresh:true, n:st.n });
     $("quick").value=""; $("hint").className="hint ok"; $("hint").textContent=`Élève ${n} ajouté.`;
     commit();
   });
   $("sim").onclick = ()=>{
     if (st.rows.some(r=>r.ex)) st.rows = st.rows.filter(r=>!r.ex);
-    for (let i=0;i<30;i++){ const c=[0,0,0,0,0,0]; for(let j=0;j<N_LANCERS;j++) c[Math.floor(Math.random()*6)]++; st.rows.push({ name:"Élève "+(st.rows.length+1), c, sim:true }); }
+    for (let i=0;i<30;i++){ const c=[0,0,0,0,0,0]; for(let j=0;j<st.n;j++) c[Math.floor(Math.random()*6)]++; st.rows.push({ name:"Élève "+(st.rows.length+1), c, sim:true, n:st.n }); }
     commit();
   };
   let armed=false;
   $("reset").onclick = ()=>{
     if (!armed){ armed=true; $("reset").textContent="Effacer tout et changer de QR code ?"; setTimeout(()=>{armed=false;$("reset").textContent="Nouvelle séance";},4000); return; }
     armed=false; $("reset").textContent="Nouvelle séance";
-    st = { salle:"des-"+rand(14), rows:[], face:st.face, qr:true };
+    st = { salle:"des-"+rand(14), rows:[], face:st.face, qr:true, n:st.n }; $("nnote").hidden=true;
     seen = new Set(); commit(); drawQR(); showJoin(true); connect();
   };
   $("rows").addEventListener("click", e=>{ const b=e.target.closest(".del"); if(!b) return; const r=st.rows[+b.dataset.i]; if (r && r.tel){ st.ignored=(st.ignored||[]); st.ignored.push(r.tel); } st.rows.splice(+b.dataset.i,1); commit(); });
@@ -399,8 +427,8 @@ function profMode(){
     const rows=st.rows;
     $("rows").innerHTML = rows.map((r,i)=>{
       const t=sum(r.c), cls=[r.ex?"ex":"", r.sim?"sim":"", r.tel?"tel":"", r.fresh?"new":""].join(" ");
-      return `<tr class="${cls}"><td class="name">${r.name}</td>${r.c.map(v=>`<td>${v}</td>`).join("")}<td class="tot ${t!==N_LANCERS?'bad':''}">${t}</td><td><button class="del" data-i="${i}" aria-label="Supprimer ${r.name}">×</button></td></tr>`;
-    }).join("") || `<tr><td colspan="9" class="muted" style="padding:18px;font-family:var(--f-body);white-space:normal">En attente des premiers résultats. Les élèves scannent le QR code, font leurs 20 lancers, et leur ligne apparaît ici.</td></tr>`;
+      return `<tr class="${cls}"><td class="name">${r.name}</td>${r.c.map(v=>`<td>${v}</td>`).join("")}<td class="tot ${t!==(r.n||st.n)?'bad':''}">${t}</td><td><button class="del" data-i="${i}" aria-label="Supprimer ${r.name}">×</button></td></tr>`;
+    }).join("") || `<tr><td colspan="9" class="muted" style="padding:18px;font-family:var(--f-body);white-space:normal">En attente des premiers résultats. Les élèves scannent le QR code, font leurs ${st.n} lancers, et leur ligne apparaît ici.</td></tr>`;
     rows.forEach(r=>delete r.fresh);
     const T=[0,0,0,0,0,0]; rows.forEach(r=>r.c.forEach((v,i)=>T[i]+=v)); const N=sum(T);
     T.forEach((v,i)=>{ $("t"+(i+1)).textContent=v; $("q"+(i+1)).textContent = N?fmt(v/N):"–"; });
@@ -430,10 +458,10 @@ function profMode(){
     const f=st.face-1, pts=[]; let n=0,k=0;
     rows.forEach(r=>{ n+=sum(r.c); k+=r.c[f]; if(n) pts.push([n,k/n]); });
     const ymax=Math.max(0.5, Math.ceil(Math.max(0,...pts.map(p=>p[1]))*10+0.5)/10);
-    const N=pts.length?pts[pts.length-1][0]:N_LANCERS*10, xmax=Math.max(N,N_LANCERS*2);
+    const N=pts.length?pts[pts.length-1][0]:st.n*10, xmax=Math.max(N,st.n*2), n0=Math.max(1,Math.min(pts.length?pts[0][0]:st.n, xmax/4));
     const x=v=>ML+v/xmax*PW, y=v=>MT+PH-Math.min(v,ymax)/ymax*PH;
     let s=""; const up=[],lo=[];
-    for (let i=0;i<=80;i++){ const nn=N_LANCERS+(xmax-N_LANCERS)*i/80, e=1/Math.sqrt(nn); up.push(`${x(nn)},${y(Math.min(ymax,P+e))}`); lo.unshift(`${x(nn)},${y(Math.max(0,P-e))}`); }
+    for (let i=0;i<=80;i++){ const nn=n0+(xmax-n0)*i/80, e=1/Math.sqrt(nn); up.push(`${x(nn)},${y(Math.min(ymax,P+e))}`); lo.unshift(`${x(nn)},${y(Math.max(0,P-e))}`); }
     s+=`<polygon class="band" points="${up.concat(lo).join(" ")}"/>`;
     const step=niceStep(ymax);
     for (let v=0; v<=ymax+1e-9; v+=step) s+=`<line class="gridl" x1="${ML}" x2="${W-MR}" y1="${y(v)}" y2="${y(v)}"/><text x="${ML-8}" y="${y(v)+4}" text-anchor="end">${fmt(v,2)}</text>`;
@@ -451,7 +479,7 @@ function profMode(){
     $("conv").innerHTML=s;
   }
 
-  drawQR(); showJoin(st.qr!==false); render(); connect();
+  drawQR(); renderN(); showJoin(st.qr!==false); render(); connect();
 }
 })();
 </script>
